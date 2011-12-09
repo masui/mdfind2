@@ -1,0 +1,126 @@
+#!/usr/bin/env macruby
+# -*- coding: utf-8 -*-
+# -*- ruby -*-
+#
+#  % mdfind2 -f/--from date1        (e.g. --from 2010/1/1)
+#            -t/--to date2
+#            -q/--query query       (e.g. --query 'キーワード')
+#            -c/--contenttype type  (e.g. --type com.omnigroup.omnigraffle.graffle)
+#            -k/--kind kind         (e.g. --kind 'HTML Document')
+#            -b/--biggerthan size   (e.g. --biggerthan 100000)
+#            -s/--smallerthan size
+#            -d/--downloadfrom url
+#            -n/--name name
+#            -r/--reverse           (小さいものから/古いものから)
+#
+#
+#  % mdfind2 --contenttype com.omnigroup.omnigraffle.graffle --from 2011/11/1
+#  % mdfind2 --query '検索' --contenttype 'com.adobe.pdf'
+#
+
+if ARGV.length == 0 then # 条件ゼロでは検索しない
+  STDERR.puts "% mdfind2 options"
+  exit
+end
+
+framework 'Cocoa'
+
+# オプション解析
+# http://www.ruby-lang.org/ja/old-man/html/optparse_A5C1A5E5A1BCA5C8A5EAA5A2A5EB.html
+require 'optparse'
+
+def finish(notification)
+  (0...@query.resultCount).each { |i|
+    path = @query.resultAtIndex(i).valueForAttribute('kMDItemPath')
+    puts path
+  }
+  exit
+end
+
+predicates = []
+usedate = false
+usesize = false
+reverse = false
+
+@query = NSMetadataQuery.alloc.init
+@query.searchScopes = [ENV['HOME']]
+
+# デフォルトでは新しいものから順に表示
+@query.setSortDescriptors([NSSortDescriptor.alloc.initWithKey('kMDItemContentModificationDate',ascending:false)])
+
+NSNotificationCenter.defaultCenter.addObserver(self,
+                                               selector:'finish:',
+                                               name:'NSMetadataQueryDidFinishGatheringNotification',
+                                               object:@query)
+
+opt = OptionParser.new
+
+opt.on('-f from', '--from from') { |from|
+  # puts "from = #{from}"
+  ymd = from.split(/\//)
+  predicates << NSPredicate.predicateWithFormat("kMDItemFSContentChangeDate >= %@", Time.local(*ymd))
+  usedate = true
+}
+opt.on('-t to', '--to to') { |to|
+  # puts "to = #{to}"
+  ymd = to.split(/\//)
+  predicates << NSPredicate.predicateWithFormat("kMDItemFSContentChangeDate <= %@", Time.local(*ymd))
+  usedate = true
+}
+opt.on('-q query', '--query query'){ |query|
+  # puts "query = #{query}"
+  predicates << NSPredicate.predicateWithFormat("kMDItemTextContent like[c] %@", "#{query}")
+}
+opt.on('-c contenttype', '--contenttype contenttype'){ |contenttype|
+  # puts "contenttype = #{contenttype}"
+  predicates << NSPredicate.predicateWithFormat("kMDItemContentType == %@", contenttype)
+}
+opt.on('-k kind', '--kind kind'){ |kind|
+  # puts "kind = #{kind}"
+  predicates << NSPredicate.predicateWithFormat("kMDItemKind == %@", kind)
+}
+opt.on('-b size', '--biggerthan size'){ |size|
+  # puts "biggerthan = #{size}"
+  predicates << NSPredicate.predicateWithFormat("kMDItemFSSize >= %@", size)
+  usesize = true
+}
+opt.on('-s sizes', '--smallerthan size'){ |size|
+  # puts "smallerthan = #{size}"
+  predicates << NSPredicate.predicateWithFormat("kMDItemFSSize <= %@", size)
+  usesize = true
+}
+opt.on('-d url', '--downloadfrom url'){ |url|
+  predicates << NSPredicate.predicateWithFormat("kMDItemWhereFroms like[c] %@", "*#{url}*") # 曖昧指定
+}
+opt.on('-n name', '--name name'){ |name|
+  # predicates << NSPredicate.predicateWithFormat("kMDItemPath like[c] %@", "#{path}") kMDItemPathは検索に利用できないぽい
+  predicates << NSPredicate.predicateWithFormat("kMDItemFSName like[c] %@", "#{name}")
+}
+opt.on('-r', '--reverse'){
+  reverse = true
+}
+
+opt.parse!(ARGV)
+
+if usesize then
+  @query.setSortDescriptors([NSSortDescriptor.alloc.initWithKey('kMDItemFSSize',ascending:(reverse ? true : false))])
+end
+if usedate then
+  @query.setSortDescriptors([NSSortDescriptor.alloc.initWithKey('kMDItemContentModificationDate',ascending:(reverse ? true : false))])
+end
+
+if predicates.length == 1 then
+  @query.predicate = predicates[0]
+elsif predicates.length > 1 then
+  @query.predicate = NSCompoundPredicate.andPredicateWithSubpredicates(predicates)
+else
+  @query.predicate = nil
+  exit
+end
+
+@query.startQuery
+NSRunLoop.currentRunLoop.run
+
+
+
+
